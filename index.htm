@@ -1024,6 +1024,38 @@ padding: 10px 12px;
   backdrop-filter: blur(2px);
 }
 
+
+  /* ===== Zone inondable ===== */
+  .map-legend{
+    background: rgba(255,255,255,0.82);
+    border: 1px solid rgba(0,0,0,0.10);
+    border-radius: 14px;
+    padding: 10px 12px;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.14);
+    font-size: 12px;
+    color: #111;
+    line-height: 1.25;
+    min-width: 190px;
+    max-width: 240px;
+    backdrop-filter: blur(4px);
+  }
+  .map-legend .title{ font-weight: 900; margin-bottom: 8px; }
+  .map-legend .row{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin: 6px 0;
+    font-weight: 800;
+  }
+  .map-legend .sw{
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid rgba(0,0,0,0.12);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25);
+    flex: 0 0 auto;
+  }
+
 </style>
 </head>
 
@@ -1200,6 +1232,22 @@ padding: 10px 12px;
       }
     }
   };
+
+  const FLOOD_LAYER_CONFIG = {
+    label: "Zone inondable",
+    // À garder relatif pour GitHub Pages :
+    // data/dataset.geojson dans le dépôt => ./data/dataset.geojson
+    url: "./data/dataset.geojson",
+    legendTitle: "Zone inondable",
+    dnStyles: {
+      1: { fillColor: "#deebf7", fillOpacity: 0.35, label: "DN 1" },
+      2: { fillColor: "#c6dbef", fillOpacity: 0.42, label: "DN 2" },
+      3: { fillColor: "#9ecae1", fillOpacity: 0.50, label: "DN 3" },
+      4: { fillColor: "#6baed6", fillOpacity: 0.58, label: "DN 4" },
+      5: { fillColor: "#08519c", fillOpacity: 0.68, label: "DN 5" }
+    }
+  };
+
 
   // ===============================
   // COURS D'EAU – Huveaune découpée en tronçons
@@ -1510,6 +1558,11 @@ padding: 10px 12px;
     riverCasingLayer: null,
     riverLabelsLayer: null,
     riverGroup: null,
+    floodLayer: null,
+    floodGroup: null,
+    floodLegend: null,
+    floodLoaded: false,
+    floodLoadPromise: null,
     stLayer: null,
     ptLayer: null,
     senLayer: null,
@@ -2003,9 +2056,97 @@ function updateAlertLegend(counts){
     }
   }
 
+
+  function getFloodStyle(feature){
+    const dn = Number(feature?.properties?.DN);
+    const style = FLOOD_LAYER_CONFIG.dnStyles[dn];
+    if (!style){
+      return {
+        color: "rgba(0,0,0,0)",
+        weight: 0,
+        opacity: 0,
+        fillColor: "transparent",
+        fillOpacity: 0
+      };
+    }
+    return {
+      color: "rgba(0,0,0,0)",
+      weight: 0,
+      opacity: 0,
+      fillColor: style.fillColor,
+      fillOpacity: style.fillOpacity
+    };
+  }
+
+  async function ensureFloodLayerLoaded(){
+    if (MAP.floodLoaded) return MAP.floodLayer;
+    if (MAP.floodLoadPromise) return MAP.floodLoadPromise;
+
+    MAP.floodLoadPromise = (async () => {
+      const response = await fetch(FLOOD_LAYER_CONFIG.url, { cache: "no-cache" });
+      if (!response.ok){
+        throw new Error(`Chargement impossible (${response.status}) : ${FLOOD_LAYER_CONFIG.url}`);
+      }
+
+      const geojson = await response.json();
+
+      MAP.floodLayer = L.geoJSON(geojson, {
+        renderer: L.canvas(),
+        interactive: false,
+        filter: (feature) => Number(feature?.properties?.DN) > 0,
+        style: getFloodStyle
+      });
+
+      MAP.floodGroup.addLayer(MAP.floodLayer);
+      MAP.floodLoaded = true;
+      return MAP.floodLayer;
+    })();
+
+    try{
+      return await MAP.floodLoadPromise;
+    }catch(error){
+      console.error("Erreur de chargement de la couche inondable :", error);
+      throw error;
+    }finally{
+      if (!MAP.floodLoaded){
+        MAP.floodLoadPromise = null;
+      }
+    }
+  }
+
+  function initFloodLegendControl(){
+    MAP.floodLegend = L.control({ position: "bottomright" });
+    MAP.floodLegend.onAdd = () => {
+      const div = L.DomUtil.create("div", "map-legend");
+      const rows = Object.entries(FLOOD_LAYER_CONFIG.dnStyles)
+        .sort((a, b) => Number(a[0]) - Number(b[0]))
+        .map(([dn, cfg]) => `<div class="row"><span class="sw" style="background:${cfg.fillColor};"></span>${cfg.label}</div>`)
+        .join("");
+
+      div.innerHTML = `
+        <div class="title">${FLOOD_LAYER_CONFIG.legendTitle}</div>
+        ${rows}
+      `;
+      if (window.L && L.DomEvent){
+        L.DomEvent.disableClickPropagation(div);
+        L.DomEvent.disableScrollPropagation(div);
+      }
+      return div;
+    };
+    MAP.floodLegend.addTo(MAP.map);
+    updateFloodLegend();
+  }
+
+  function updateFloodLegend(){
+    const el = document.querySelector(".map-legend");
+    if (!el || !MAP.map || !MAP.floodGroup) return;
+    el.style.display = MAP.map.hasLayer(MAP.floodGroup) ? "block" : "none";
+  }
+
   function initMapLayers(){
     initMapPanes();
     initRiverSegmentsLayer();
+    MAP.floodGroup = L.layerGroup();
     MAP.stLayer = L.layerGroup().addTo(MAP.map);
     MAP.ptLayer = L.layerGroup().addTo(MAP.map);
     MAP.senLayer = L.layerGroup();
@@ -2014,6 +2155,7 @@ function updateAlertLegend(counts){
   function initMapLayerControl(){
     MAP.layerControl = L.control.layers(null, {
       "Tronçons Huveaune": MAP.riverGroup,
+      "Zone inondable": MAP.floodGroup,
       "Stations": MAP.stLayer,
       "Débordements": MAP.ptLayer,
       "Sentinelles": MAP.senLayer
@@ -2043,9 +2185,24 @@ function updateAlertLegend(counts){
       MAP._declutterTimer = setTimeout(declutterFn, 60);
     });
 
-    MAP.map.on("overlayadd overlayremove", () => {
+    MAP.map.on("overlayadd", async (e) => {
       clearTimeout(MAP._declutterTimer);
       MAP._declutterTimer = setTimeout(declutterFn, 60);
+
+      if (e.layer === MAP.floodGroup){
+        try{
+          await ensureFloodLayerLoaded();
+        }catch(error){}
+      }
+
+      updateFloodLegend();
+      updateAlertLegend();
+    });
+
+    MAP.map.on("overlayremove", () => {
+      clearTimeout(MAP._declutterTimer);
+      MAP._declutterTimer = setTimeout(declutterFn, 60);
+      updateFloodLegend();
       updateAlertLegend();
     });
   }
@@ -2065,6 +2222,7 @@ function initMapIfNeeded(){
 
     initMapLayers();
     initMapLayerControl();
+    initFloodLegendControl();
     initAlertLegendControl();
     bindMapUiEvents(declutterSentinelLabels);
     // Stations (petits points bleus)
