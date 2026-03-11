@@ -1240,10 +1240,10 @@ padding: 10px 12px;
     // data/dataset.geojson dans le dépôt => ./data/dataset.geojson
     url: "./data/dataset.geojson",
     legendTitle: "Hauteur d'eau",
-    dnStyles: {
-      1: { fillColor: "#c6dbef", fillOpacity: 0.75, weight: 1, opacity: 1, label: "0–50 cm" },
-      2: { fillColor: "#6baed6", fillOpacity: 0.75, weight: 1, opacity: 1, label: "50 cm à 1,00 m" },
-      3: { fillColor: "#08519c", fillOpacity: 0.75, weight: 1, opacity: 1, label: "> 1,00 m" }
+    hcodeStyles: {
+      1: { fillColor: "#c6dbef", fillOpacity: 0.45, label: "0–50 cm" },
+      2: { fillColor: "#6baed6", fillOpacity: 0.52, label: "50 cm à 1,00 m" },
+      3: { fillColor: "#08519c", fillOpacity: 0.60, label: "> 1,00 m" }
     }
   };
 
@@ -2056,12 +2056,17 @@ function updateAlertLegend(counts){
 
 
 
+  function getFloodClassValue(feature){
+    const raw = feature?.properties?.HCODE ?? feature?.properties?.HCOD ?? feature?.properties?.DN;
+    return Number(raw);
+  }
+
   function getFloodStyle(feature){
-    const dn = Number(feature?.properties?.DN);
+    const hcode = getFloodClassValue(feature);
     const style =
-      dn === 1 ? FLOOD_LAYER_CONFIG.dnStyles[1] :
-      dn === 2 ? FLOOD_LAYER_CONFIG.dnStyles[2] :
-      dn >= 3 ? FLOOD_LAYER_CONFIG.dnStyles[3] :
+      hcode === 1 ? FLOOD_LAYER_CONFIG.hcodeStyles[1] :
+      hcode === 2 ? FLOOD_LAYER_CONFIG.hcodeStyles[2] :
+      hcode >= 3 ? FLOOD_LAYER_CONFIG.hcodeStyles[3] :
       null;
 
     if (!style){
@@ -2097,7 +2102,7 @@ function updateAlertLegend(counts){
       MAP.floodLayer = L.geoJSON(geojson, {
         renderer: L.canvas(),
         interactive: false,
-        filter: (feature) => Number(feature?.properties?.DN) > 0,
+        filter: (feature) => getFloodClassValue(feature) > 0,
         style: getFloodStyle
       });
 
@@ -2123,7 +2128,7 @@ function updateAlertLegend(counts){
     MAP.floodLegend.onAdd = () => {
       const div = L.DomUtil.create("div", "map-legend");
       const rows = [1, 2, 3]
-        .map((dn) => FLOOD_LAYER_CONFIG.dnStyles[dn])
+        .map((code) => FLOOD_LAYER_CONFIG.hcodeStyles[code])
         .filter(Boolean)
         .map((cfg) => `<div class="row"><span class="sw" style="background:${cfg.fillColor};"></span>${cfg.label}</div>`)
         .join("");
